@@ -6,6 +6,10 @@ from assets import (
     player_walking_left_image,
     player_jumping_right_image,
     player_jumping_left_image,
+    player_walking_right_red_image,
+    player_walking_left_red_image,
+    player_jumping_right_red_image,
+    player_jumping_left_red_image,
 )
 
 
@@ -22,16 +26,32 @@ class Player(pygame.Rect):
         self.health = 100
         self.damage_cooldown = 0
 
-    def update(self):
+    def update(self, damaged=False):
         if self.jumping:
 
             if self.direction == "right":
-                self.image = player_jumping_right_image
+                self.image = (
+                    player_jumping_right_red_image
+                    if damaged
+                    else player_jumping_right_image
+                )
             elif self.direction == "left":
-                self.image = player_jumping_left_image
+                self.image = (
+                    player_jumping_left_red_image
+                    if damaged
+                    else player_jumping_left_image
+                )
         else:
 
             if self.direction == "right":
-                self.image = player_walking_right_image
+                self.image = (
+                    player_walking_right_red_image
+                    if damaged
+                    else player_walking_right_image
+                )
             elif self.direction == "left":
-                self.image = player_walking_left_image
+                self.image = (
+                    player_walking_left_red_image
+                    if damaged
+                    else player_walking_left_image
+                )
