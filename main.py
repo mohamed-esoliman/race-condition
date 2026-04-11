@@ -4,8 +4,12 @@ from sys import exit
 from constants import *
 from assets import *
 from player import Player
-from tile import Tile
-from enemy import Enemy
+from soundManager import SoundManager
+from screens import draw_overlay_screen, draw_menu_screen, draw_story_screen
+
+from levels.level1 import level1
+from levels.level2 import level2
+from levels.level3 import level3
 
 pygame.init()
 
@@ -15,133 +19,60 @@ pygame.display.set_icon(icon)
 
 clock = pygame.time.Clock()
 font_large = pygame.font.SysFont(None, 72)
-font_small = pygame.font.SysFont(None, 36)
-font_tiny = pygame.font.SysFont(None, 24)
+font_medium = pygame.font.SysFont(None, 36)
+font_small = pygame.font.SysFont(None, 24)
 
-PLAYING = "playing"
-GAME_OVER = "game_over"
-WIN = "win"
+LEVELS = [level1, level2, level3]
+current_level_index = 0
 
-POWERUP_SIZE = 24
-POWERUP_BONUS = 15
+current_difficulty = DIFFICULTIES["medium"]
+menu_selection = 1  # 1 is medium
 
-
-class PowerUp(pygame.Rect):
-    def __init__(self, x, y):
-        pygame.Rect.__init__(self, x, y, POWERUP_SIZE, POWERUP_SIZE)
-        self.collected = False
+sound_manager = SoundManager.getInstance()
+background_audio_started = False
+ticking_sound_channel = None
 
 
-Y_ground = HEIGHT - TILE_HEIGHT 
-Y_level2 = HEIGHT - TILE_HEIGHT * 3 
-Y_level3 = HEIGHT - TILE_HEIGHT * 5 
-Y_level4 = HEIGHT - TILE_HEIGHT * 7 
-Y_level5 = HEIGHT - TILE_HEIGHT * 9 
-Y_level6 = HEIGHT - TILE_HEIGHT * 11 
+def start_background_audio():
+    global background_audio_started, ticking_sound_channel
+    if background_audio_started:
+        return
+    sound_manager.playBGM(BG_MUSIC)
+    pygame.mixer.music.set_volume(BG_MUSIC_VOLUME)
+    ticking_sound_channel = sound_manager.playSFX(TICKING_LOOP, loops=-1)
+    if ticking_sound_channel is not None:
+        ticking_sound_channel.set_volume(TICKING_VOLUME)
+    background_audio_started = True
 
 
-def build_tiles():
-    tiles = []
-
-    # Ground
-    for i in range(96):
-        tiles.append(Tile(i * TILE_WIDTH, Y_ground, tile_image))
-
-    platforms = [
-        # Section 1
-        (2, 4, Y_level2),
-        (7, 3, Y_level3),
-        (11, 3, Y_level4),
-        (15, 4, Y_level3),
-        (20, 3, Y_level2),
-
-        # Section 2
-        (25, 3, Y_level2),
-        (29, 2, Y_level3),
-        (32, 2, Y_level4),
-        (35, 3, Y_level5),
-        (39, 2, Y_level4),
-        (42, 2, Y_level3),
-        (45, 3, Y_level2),
-        
-        # Section 3
-        (49, 3, Y_level3),
-        (53, 2, Y_level4),
-        (56, 2, Y_level5),
-        (59, 2, Y_level6),
-        (62, 2, Y_level5),
-        (65, 2, Y_level4),
-        (68, 3, Y_level3),
-        
-        # Section 4
-        (73, 3, Y_level2),
-        (77, 2, Y_level3),
-        (80, 2, Y_level4),
-        (83, 2, Y_level5),
-        (86, 2, Y_level6),
-        (89, 2, Y_level5),
-        (91, 2, Y_level6),  # gate
-        (93, 2, Y_level5),
-    ]
-
-    for start, length, y in platforms:
-        for i in range(length):
-            tiles.append(Tile((start + i) * TILE_WIDTH, y, tile_image))
-
-    return tiles
+def load_level(level_index):
+    level = LEVELS[level_index]
+    tiles = level.build_tiles()
+    enemies = level.build_enemies(chase_range=current_difficulty["chase_range"])
+    powerups = level.build_powerups()
+    lasers = level.build_lasers()
+    gate = level.build_gate()
+    return tiles, enemies, powerups, lasers, gate
 
 
-def build_powerups():
-
-    powerup_positions = [
-        (4 * TILE_WIDTH + 12, Y_level2 - POWERUP_SIZE),
-        (12 * TILE_WIDTH + 12, Y_level4 - POWERUP_SIZE),
-        (21 * TILE_WIDTH + 12, Y_level2 - POWERUP_SIZE),
-        (30 * TILE_WIDTH + 12, Y_level3 - POWERUP_SIZE),
-        (36 * TILE_WIDTH + 12, Y_level5 - POWERUP_SIZE),
-        (43 * TILE_WIDTH + 12, Y_level3 - POWERUP_SIZE),
-    ]
-    return [PowerUp(x, y) for x, y in powerup_positions]
-
-
-def build_enemies():
-    enemy_positions = [
-        (8 * TILE_WIDTH, Y_level3 - ENEMY_HEIGHT),
-        (16 * TILE_WIDTH, Y_level3 - ENEMY_HEIGHT),
-        (35 * TILE_WIDTH, Y_level5 - ENEMY_HEIGHT),
-        (45 * TILE_WIDTH, Y_level2 - ENEMY_HEIGHT),
-        (56 * TILE_WIDTH, Y_level5 - ENEMY_HEIGHT),
-    ]
-    return [Enemy(x, y) for x, y in enemy_positions]
-
-gate = pygame.Rect(
-    92 * TILE_WIDTH,
-    Y_level6 - GATE_HEIGHT,
-    GATE_WIDTH,
-    GATE_HEIGHT,
-)
-
-tiles = build_tiles()
-
-
-def reset_game():
-    """
-    Reset the game state
-    Returns: player, enemies, powerups, time_remaining, game_state
-    """
-    player = Player()
-    enemies = build_enemies()
-    powerups = build_powerups()
-    time_remaining = float(TIMER_START)
+def reset_game(level_index=0):
+    player = Player(max_health=current_difficulty["max_health"])
+    tiles, enemies, powerups, lasers, gate = load_level(level_index)
+    time_remaining = float(current_difficulty["timer"])
     game_state = PLAYING
-    return player, enemies, powerups, time_remaining, game_state
+    return player, tiles, enemies, powerups, lasers, gate, time_remaining, game_state
 
 
-player, enemies, powerups, time_remaining, game_state = reset_game()
+game_state = MENU
+player = None
+tiles = None
+enemies = None
+powerups = None
+lasers = None
+gate = None
+time_remaining = None
 
-
-# Collisions
-
+# Collision detection
 
 def check_collision(collider):
     for tile in tiles:
@@ -171,8 +102,7 @@ def check_vertical_collision(collider):
         collider.velocity_y = 0
 
 
-# Movement
-
+# Movement for player
 
 def move_player():
     if player.direction == "left" and player.velocity_x < 0:
@@ -199,24 +129,26 @@ def move_player():
         player.damage_cooldown -= 1
 
 
+# Movement for enemies
+
 def move_enemies():
     for enemy in enemies:
-        enemy.update_ai(player.x, player.y)
+        enemy.update(player.x, player.y)
 
         prev_vx = enemy.velocity_x
         enemy.x += enemy.velocity_x
 
         if enemy.x <= 0:
             enemy.x = 0
-            enemy.patrol_direction = 1
+            enemy.movement_direction = 1
         elif enemy.x + enemy.width >= WORLD_WIDTH:
             enemy.x = WORLD_WIDTH - enemy.width
-            enemy.patrol_direction = -1
+            enemy.movement_direction = -1
 
         check_horizontal_collision(enemy)
 
         if prev_vx != 0 and enemy.velocity_x == 0:
-            enemy.patrol_direction *= -1
+            enemy.movement_direction *= -1
 
         enemy.velocity_y += GRAVITY
         enemy.y += enemy.velocity_y
@@ -227,47 +159,45 @@ def move_enemies():
             get_player_damage_rect(player).colliderect(get_enemy_damage_rect(enemy))
             and player.damage_cooldown == 0
         ):
+            # player takes damage
             player.health = max(0, player.health - 10)
             player.damage_cooldown = 60
+            sound_manager.playSFX(HURT_SFX)
 
+
+# Update lasers
+
+def update_lasers():
+    for laser in lasers:
+        laser.update()
+        if laser.on and player.damage_cooldown == 0:
+            # player takes damage
+            if get_player_damage_rect(player).colliderect(laser):
+                player.health = max(0, player.health - LASER_DAMAGE)
+                player.damage_cooldown = 60
+                sound_manager.playSFX(HURT_SFX)
+
+
+# Main game loop
 
 def move():
     move_player()
     move_enemies()
+    update_lasers()
 
 
 def get_player_damage_rect(player_rect):
+    # I made this rect smaller to make it easier to avoid enemies
     damage_rect = player_rect.inflate(-22, -24)
     damage_rect.midbottom = player_rect.midbottom
     return damage_rect
 
 
 def get_enemy_damage_rect(enemy_rect):
+    # I made this rect smaller to make it easier to avoid enemies
     damage_rect = enemy_rect.inflate(-16, -10)
     damage_rect.midbottom = enemy_rect.midbottom
     return damage_rect
-
-
-# Rendering
-
-
-def draw_overlay(title, subtitle):
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 160))
-    window.blit(overlay, (0, 0))
-
-    window.blit(
-        font_large.render(title, True, (255, 255, 255)),
-        font_large.render(title, True, (255, 255, 255)).get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 - 40)
-        ),
-    )
-    window.blit(
-        font_small.render(subtitle, True, (200, 200, 200)),
-        font_small.render(subtitle, True, (200, 200, 200)).get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 + 20)
-        ),
-    )
 
 
 def draw():
@@ -279,9 +209,11 @@ def draw():
     for tile in tiles:
         window.blit(tile.image, (tile.x - camera_x, tile.y))
 
+    for laser in lasers:
+        window.blit(laser.image, (laser.x - camera_x, laser.y))
+
     window.blit(gate_image, (gate.x - camera_x, gate.y))
 
-    # Power-ups
     for powerup in powerups:
         if not powerup.collected:
             powerup_x = int(powerup.x + 12 - camera_x)
@@ -289,7 +221,7 @@ def draw():
             pygame.draw.circle(window, (0, 200, 160), (powerup_x, powerup_y), 12)
             pygame.draw.circle(window, (180, 255, 235), (powerup_x, powerup_y), 6)
 
-    # Player
+    # logic for flashing red when player is damaged
     is_flashing_red = (
         player.damage_cooldown > 0 and (player.damage_cooldown // 6) % 2 == 0
     )
@@ -297,48 +229,51 @@ def draw():
     player_x = player.x - camera_x
     window.blit(player.image, (player_x, player.y))
 
-    # Enemies
     for enemy in enemies:
         window.blit(enemy.image, (enemy.x - camera_x, enemy.y))
 
-    # Health bar
-    bar_x, bar_y, bar_w, bar_h = 16, 16, 160, 14
-    pygame.draw.rect(window, (60, 0, 0), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+    # logic for the health bar
+    pygame.draw.rect(window, (60, 0, 0), (HEALTH_BAR_X, HEALTH_BAR_Y, HEALTH_BAR_W, HEALTH_BAR_H), border_radius=4)
     pygame.draw.rect(
         window,
         (220, 40, 40),
-        (bar_x, bar_y, int(bar_w * player.health / 100), bar_h),
+        (HEALTH_BAR_X, HEALTH_BAR_Y, int(HEALTH_BAR_W * player.health / player.max_health), HEALTH_BAR_H),
         border_radius=4,
     )
     pygame.draw.rect(
-        window, (255, 255, 255), (bar_x, bar_y, bar_w, bar_h), 1, border_radius=4
+        window, (255, 255, 255), (HEALTH_BAR_X, HEALTH_BAR_Y, HEALTH_BAR_W, HEALTH_BAR_H), 1, border_radius=4
     )
 
-    # Timer
-    secs = max(0, int(time_remaining))
-    timer_string = f"{secs // 60}:{secs % 60:02d}"
+    # timer
+    seconds = max(0, int(time_remaining))
+    timer_string = f"{seconds // 60}:{seconds % 60:02d}"
     if time_remaining > 30:
         timer_color = (255, 255, 255)
     elif time_remaining > 15:
         timer_color = (255, 220, 50)
     else:
         timer_color = (255, 60, 60)
+
     timer_surface = font_small.render(timer_string, True, timer_color)
     window.blit(timer_surface, timer_surface.get_rect(center=(WIDTH // 2, 24)))
 
-    # Overlay
+    # level number
+    level_surface = font_small.render(
+        f"Level {current_level_index + 1}/{len(LEVELS)}", True, (255, 255, 255)
+    )
+    window.blit(level_surface, (16, 40))
+
+    # game over and win screens
     if game_state == GAME_OVER:
-        draw_overlay("GAME OVER", "Press R to restart")
+        draw_overlay_screen(window, "GAME OVER", "R: restart level  Q: back to menu")
     elif game_state == WIN:
-        draw_overlay("YOU ESCAPED!", "Press R to play again")
+        draw_overlay_screen(window, "YOU FINISHED ALL LEVELS!", "R: play again  Q: back to menu")
 
-
-# Main loop
 
 delta_time = 0.0
 
 while True:
-
+    start_background_audio()
     for event in pygame.event.get():
         if event.type == pygame.QUIT or (
             event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
@@ -346,11 +281,51 @@ while True:
             pygame.quit()
             exit()
 
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-            if game_state in (GAME_OVER, WIN):
-                player, enemies, powerups, time_remaining, game_state = reset_game()
+        if event.type == pygame.KEYDOWN:
+            if game_state == MENU:
+                if event.key == pygame.K_UP:
+                    menu_selection = (menu_selection - 1) % 3
+                elif event.key == pygame.K_DOWN:
+                    menu_selection = (menu_selection + 1) % 3
+                elif event.key == pygame.K_RETURN:
+                    difficulty_keys = ["easy", "medium", "hard"]
+                    current_difficulty = DIFFICULTIES[difficulty_keys[menu_selection]]
+                    game_state = STORY
+            elif game_state == STORY:
+                if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    current_level_index = 0
+                    (
+                        player,
+                        tiles,
+                        enemies,
+                        powerups,
+                        lasers,
+                        gate,
+                        time_remaining,
+                        game_state,
+                    ) = reset_game(current_level_index)
+            else:
+                if event.key == pygame.K_r:
+                    if game_state == WIN:
+                        current_level_index = 0
+                    (
+                        player,
+                        tiles,
+                        enemies,
+                        powerups,
+                        lasers,
+                        gate,
+                        time_remaining,
+                        game_state,
+                    ) = reset_game(current_level_index)
+                elif event.key == pygame.K_q:
+                    game_state = MENU
 
-    if game_state == PLAYING:
+    if game_state == MENU:
+        draw_menu_screen(window, menu_selection)
+    elif game_state == STORY:
+        draw_story_screen(window)
+    elif game_state == PLAYING:
         keys = pygame.key.get_pressed()
 
         if keys[pygame.K_LEFT]:
@@ -364,24 +339,40 @@ while True:
         if keys[pygame.K_SPACE] and not player.jumping:
             player.velocity_y = PLAYER_VELOCITY_Y
             player.jumping = True
+            sound_manager.playSFX(JUMP_SFX)
 
         move()
 
         time_remaining -= delta_time
 
-        # Power-up collection
         for powerup in powerups:
             if not powerup.collected and player.colliderect(powerup):
                 powerup.collected = True
                 time_remaining += POWERUP_BONUS
+                sound_manager.playSFX(COLLECT_SFX)
 
         if time_remaining <= 0 or player.health <= 0:
             game_state = GAME_OVER
 
         if player.colliderect(gate):
-            game_state = WIN
+            if current_level_index < len(LEVELS) - 1:
+                current_level_index += 1
+                (
+                    player,
+                    tiles,
+                    enemies,
+                    powerups,
+                    lasers,
+                    gate,
+                    time_remaining,
+                    game_state,
+                ) = reset_game(current_level_index)
+            else:
+                game_state = WIN
 
-    draw()
+        draw()
+    else:
+        draw()
 
     pygame.display.update()
     delta_time = clock.tick(60) / 1000.0
